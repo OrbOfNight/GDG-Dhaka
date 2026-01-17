@@ -14,6 +14,47 @@ import { CheckIcon } from './icons/CheckIcon';
 import { RefreshIcon } from './icons/RefreshIcon';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { SpeakerWaveIcon } from './icons/SpeakerWaveIcon';
+import { MicrophoneIcon } from './icons/MicrophoneIcon';
+
+// Fix: Add type definitions for SpeechRecognition API to fix "Cannot find name 'SpeechRecognition'"
+interface SpeechRecognitionAlternative {
+  readonly transcript: string;
+  readonly confidence: number;
+}
+
+interface SpeechRecognitionResult {
+  readonly isFinal: boolean;
+  readonly length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+}
+
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionEvent extends Event {
+  readonly resultIndex: number;
+  readonly results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  readonly error: string;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+}
 
 const Chatbot: React.FC = () => {
   const [chat, setChat] = useState<Chat | null>(null);
@@ -24,9 +65,13 @@ const Chatbot: React.FC = () => {
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const [playingMessageIndex, setPlayingMessageIndex] = useState<number | null>(null);
   const [loadingAudioIndex, setLoadingAudioIndex] = useState<number | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const speechInputRef = useRef<string>('');
 
   useEffect(() => {
     setChat(startChat());
@@ -34,6 +79,39 @@ const Chatbot: React.FC = () => {
         role: 'model',
         text: 'Hello! How can I help you today?'
     }]);
+
+    // Fix: Rename SpeechRecognition to avoid conflict with interface and add explicit types
+    const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognitionAPI) {
+      const recognition: SpeechRecognition = new SpeechRecognitionAPI();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognitionRef.current = recognition;
+
+      recognition.onstart = () => setIsListening(true);
+      recognition.onend = () => setIsListening(false);
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+          console.error('Speech recognition error:', event.error);
+          setError(`Voice error: ${event.error}. Please check microphone permissions.`);
+          setIsListening(false);
+      };
+      
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        setUserInput(speechInputRef.current + finalTranscript + interimTranscript);
+      };
+    } else {
+      console.warn("Speech Recognition API not supported in this browser.");
+    }
   }, []);
 
   useEffect(() => {
@@ -43,14 +121,10 @@ const Chatbot: React.FC = () => {
   }, [history]);
 
   const handleNewChat = () => {
-    if (audioSourceRef.current) {
-      audioSourceRef.current.stop();
-    }
+    if (audioSourceRef.current) audioSourceRef.current.stop();
+    if (recognitionRef.current && isListening) recognitionRef.current.stop();
     setChat(startChat());
-    setHistory([{
-        role: 'model',
-        text: 'Hello! How can I help you today?'
-    }]);
+    setHistory([{ role: 'model', text: 'Hello! How can I help you today?' }]);
     setError(null);
     setPlayingMessageIndex(null);
   };
@@ -78,13 +152,10 @@ const Chatbot: React.FC = () => {
 
     try {
       const base64Audio = await generateSpeech(text);
-
       if (!audioContextRef.current) {
-        // FIX: Cast window to `any` to support `webkitAudioContext` for Safari without TypeScript errors.
         audioContextRef.current = new ((window as any).AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       }
       const ctx = audioContextRef.current;
-
       const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
       
       const source = ctx.createBufferSource();
@@ -96,7 +167,6 @@ const Chatbot: React.FC = () => {
       };
       source.start(0);
       audioSourceRef.current = source;
-
       setPlayingMessageIndex(index);
     } catch (err) {
       console.error(err);
@@ -106,10 +176,23 @@ const Chatbot: React.FC = () => {
     }
   };
 
+  const handleToggleListening = () => {
+    if (!recognitionRef.current) {
+        setError("Voice input is not supported on this browser.");
+        return;
+    }
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      speechInputRef.current = userInput.trim() ? userInput.trim() + ' ' : '';
+      recognitionRef.current.start();
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userInput.trim() || isLoading || !chat) return;
+    if (isListening) recognitionRef.current?.stop();
 
     setIsLoading(true);
     setError(null);
@@ -119,10 +202,8 @@ const Chatbot: React.FC = () => {
 
     try {
         const responseStream = await chat.sendMessageStream({ message: userInput });
-        
         let modelResponse = '';
         setHistory(prev => [...prev, { role: 'model', text: '' }]);
-
         for await (const chunk of responseStream) {
             const c = chunk as GenerateContentResponse;
             const chunkText = c.text;
@@ -138,7 +219,7 @@ const Chatbot: React.FC = () => {
     } catch (err) {
       console.error(err);
       setError('Sorry, something went wrong. Please try again.');
-      setHistory(prev => prev.slice(0, -1)); // remove user message if error
+      setHistory(prev => prev.slice(0, -2));
     } finally {
       setIsLoading(false);
     }
@@ -174,25 +255,10 @@ const Chatbot: React.FC = () => {
               </div>
               {msg.role === 'model' && msg.text && (
                   <div className="absolute top-2 right-2 flex items-center space-x-1 bg-slate-300/50 rounded-md p-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                      <button
-                        onClick={() => handlePlayAudio(msg.text, index)}
-                        className="text-slate-500 hover:text-cyan-600 disabled:opacity-50 disabled:cursor-wait"
-                        aria-label="Play audio"
-                        disabled={loadingAudioIndex === index}
-                      >
-                        {loadingAudioIndex === index ? (
-                            <SpeakerIcon className="w-4 h-4 animate-pulse" />
-                        ) : playingMessageIndex === index ? (
-                            <SpeakerWaveIcon className="w-4 h-4 text-cyan-500" />
-                        ) : (
-                            <SpeakerIcon className="w-4 h-4" />
-                        )}
+                      <button onClick={() => handlePlayAudio(msg.text, index)} className="text-slate-500 hover:text-cyan-600 disabled:opacity-50 disabled:cursor-wait" aria-label="Play audio" disabled={loadingAudioIndex === index}>
+                        {loadingAudioIndex === index ? <SpeakerIcon className="w-4 h-4 animate-pulse" /> : playingMessageIndex === index ? <SpeakerWaveIcon className="w-4 h-4 text-cyan-500" /> : <SpeakerIcon className="w-4 h-4" />}
                       </button>
-                      <button
-                        onClick={() => handleCopy(msg.text, index)}
-                        className="text-slate-500 hover:text-cyan-600"
-                        aria-label="Copy message"
-                      >
+                      <button onClick={() => handleCopy(msg.text, index)} className="text-slate-500 hover:text-cyan-600" aria-label="Copy message">
                         {copiedMessageIndex === index ? <CheckIcon className="w-4 h-4 text-green-500" /> : <CopyIcon className="w-4 h-4" />}
                       </button>
                   </div>
@@ -223,15 +289,26 @@ const Chatbot: React.FC = () => {
       <div className="pt-6 mt-4 border-t border-slate-200">
         {error && <p className="text-red-500 text-sm text-center mb-2">{error}</p>}
         <form onSubmit={handleSubmit} className="flex items-center gap-3">
-          <input
-            type="text"
-            value={userInput}
-            onChange={(e) => setUserInput(e.target.value)}
-            placeholder="Ask anything..."
-            className="flex-1 bg-white border border-slate-300 rounded-lg px-4 py-2 text-slate-900 focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 outline-none transition-colors duration-200 disabled:opacity-50"
-            disabled={isLoading}
-            aria-label="Chat input"
-          />
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={userInput}
+              onChange={(e) => setUserInput(e.target.value)}
+              placeholder={isListening ? 'Listening...' : "Ask anything..."}
+              className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2 text-slate-900 focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 outline-none transition-colors duration-200 disabled:opacity-50 pr-10"
+              disabled={isLoading}
+              aria-label="Chat input"
+            />
+            <button
+              type="button"
+              onClick={handleToggleListening}
+              className={`absolute inset-y-0 right-0 flex items-center px-3 rounded-r-lg transition-colors duration-200 ${isListening ? 'text-red-500' : 'text-slate-400 hover:text-cyan-500'}`}
+              aria-label={isListening ? 'Stop listening' : 'Start listening'}
+              disabled={!recognitionRef.current}
+            >
+              <MicrophoneIcon className="w-5 h-5" />
+            </button>
+          </div>
           <button
             type="submit"
             className="p-2 bg-cyan-500 rounded-full text-slate-900 hover:bg-cyan-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-cyan-400 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
