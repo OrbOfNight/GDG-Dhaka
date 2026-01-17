@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type, Chat } from "@google/genai";
+import { GoogleGenAI, Type, Chat, Modality } from "@google/genai";
 import type { EmailData, FilterResult } from '../types';
 
 if (!process.env.API_KEY) {
@@ -81,4 +81,33 @@ export function startChat(): Chat {
         systemInstruction: 'You are a helpful AI assistant. Format your responses using markdown when appropriate, for example for lists, code blocks, or emphasis.'
     }
   });
+}
+
+export async function generateSpeech(text: string): Promise<string> {
+  const model = "gemini-2.5-flash-preview-tts";
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' }, // A pleasant, neutral voice
+          },
+        },
+      },
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+    if (!base64Audio) {
+      throw new Error("No audio data received from API.");
+    }
+    
+    return base64Audio;
+  } catch (error) {
+    console.error("Error calling Gemini TTS API:", error);
+    throw new Error("Failed to generate speech from the AI model.");
+  }
 }
