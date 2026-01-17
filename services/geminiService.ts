@@ -77,5 +77,8 @@ export async function filterEmail(email: EmailData): Promise<FilterResult> {
 export function startChat(): Chat {
   return ai.chats.create({
     model: 'gemini-3-pro-preview',
+    config: {
+        systemInstruction: 'You are a helpful AI assistant. Format your responses using markdown when appropriate, for example for lists, code blocks, or emphasis.'
+    }
   });
 }
