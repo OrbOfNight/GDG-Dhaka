@@ -11,3 +11,8 @@ export interface FilterResult {
   classification: Classification;
   reason: string;
 }
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+}

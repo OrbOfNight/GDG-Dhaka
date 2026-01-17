@@ -1,5 +1,5 @@
 {
-  "name": "AI Email Filtering Agent",
-  "description": "An intelligent agent that uses the Gemini API to classify emails as Spam, Not Spam, or Important, providing a clear reason for its decision.",
+  "name": "AI Agent",
+  "description": "An intelligent agent that uses the Gemini API to classify emails and chat with users.",
   "requestFramePermissions": []
 }

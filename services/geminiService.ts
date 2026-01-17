@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, Chat } from "@google/genai";
 import type { EmailData, FilterResult } from '../types';
 
 if (!process.env.API_KEY) {
@@ -72,4 +72,10 @@ export async function filterEmail(email: EmailData): Promise<FilterResult> {
     console.error("Error calling Gemini API:", error);
     throw new Error("Failed to communicate with the AI model.");
   }
+}
+
+export function startChat(): Chat {
+  return ai.chats.create({
+    model: 'gemini-3-pro-preview',
+  });
 }
