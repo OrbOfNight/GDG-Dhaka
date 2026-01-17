@@ -1,5 +1,5 @@
 {
-  "name": "AI Agent",
+  "name": "Demo Agent AI",
   "description": "An intelligent agent that uses the Gemini API to classify emails and chat with users.",
   "requestFramePermissions": []
 }
